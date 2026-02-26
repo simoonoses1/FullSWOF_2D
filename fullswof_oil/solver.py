@@ -42,6 +42,9 @@ class SolverConfig:
     point_source_col: int | None = None
     point_source_flow_rate: Callable[[float], float] | None = None
 
+    # Parámetro para ROI dinámico
+    roi_buffer_m: float = 500.0  # metros de buffer alrededor del derrame
+
 
 class OilSpillSolver:
     def __init__(self, config: SolverConfig, h0: np.ndarray, z: np.ndarray | None = None, infiltration: InfiltrationModel | None = None):
@@ -59,6 +62,30 @@ class OilSpillSolver:
         self._cum_evap_deg_mass = 0.0
         self._cum_point_source_mass = 0.0
 
+        # ROI dinámico: inicializar como todo el dominio
+        self.roi_slices = (slice(0, self.h.shape[0]), slice(0, self.h.shape[1]))
+
+    def _update_roi(self, threshold: float = 1e-6):
+        """Actualiza el ROI dinámico alrededor del derrame (donde h > threshold), expandido con buffer."""
+        active = self.h > threshold
+        if not np.any(active):
+            # Si no hay celdas activas, usar todo el dominio
+            self.roi_slices = (slice(0, self.h.shape[0]), slice(0, self.h.shape[1]))
+            return
+        rows, cols = np.where(active)
+        min_row, max_row = rows.min(), rows.max()
+        min_col, max_col = cols.min(), cols.max()
+        # Calcular buffer en celdas
+        buffer_cells_y = int(np.ceil(self.cfg.roi_buffer_m / self.cfg.dy))
+        buffer_cells_x = int(np.ceil(self.cfg.roi_buffer_m / self.cfg.dx))
+        roi_row_start = max(0, min_row - buffer_cells_y)
+        roi_row_end = min(self.h.shape[0], max_row + buffer_cells_y + 1)
+        roi_col_start = max(0, min_col - buffer_cells_x)
+        roi_col_end = min(self.h.shape[1], max_col + buffer_cells_x + 1)
+        self.roi_slices = (slice(roi_row_start, roi_row_end), slice(roi_col_start, roi_col_end))
+        # Debug print (cada 10 pasos)
+        if self.time > 0 and int(self.time) % 10 == 0:
+            print(f"[Solver] ROI actualizado: filas {roi_row_start}-{roi_row_end}, cols {roi_col_start}-{roi_col_end}")
     def _apply_wall_boundaries(self, h: np.ndarray, hu: np.ndarray, hv: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         hp = np.pad(h, ((1, 1), (1, 1)), mode="edge")
         hup = np.pad(hu, ((1, 1), (1, 1)), mode="edge")
@@ -83,8 +110,15 @@ class OilSpillSolver:
         return min(dt_cfl, self.cfg.t_end - self.time)
 
     def _apply_fluxes(self, dt: float) -> None:
-        hp, hup, hvp = self._apply_wall_boundaries(self.h, self.hu, self.hv)
-        zp = np.pad(self.z, ((1, 1), (1, 1)), mode="edge")
+        # Aplicar solo en el ROI
+        roi = self.roi_slices
+        h_roi = self.h[roi]
+        hu_roi = self.hu[roi]
+        hv_roi = self.hv[roi]
+        z_roi = self.z[roi]
+
+        hp, hup, hvp = self._apply_wall_boundaries(h_roi, hu_roi, hv_roi)
+        zp = np.pad(z_roi, ((1, 1), (1, 1)), mode="edge")
 
         h_l, h_r = hp[1:-1, :-1], hp[1:-1, 1:]
         hu_l, hu_r = hup[1:-1, :-1], hup[1:-1, 1:]
@@ -108,46 +142,64 @@ class OilSpillSolver:
         fy_h, fy_hu, fy_hv, _ = rusanov_flux_y(h_b_hr, h_b_hr * u_b, h_b_hr * v_b, h_t_hr, h_t_hr * u_t, h_t_hr * v_t, self.cfg.g)
         sy = centered_topography_source_y(h_b, h_t, h_b_hr, h_t_hr, z_b, z_t, self.cfg.g)
 
-        self.h -= (dt / self.cfg.dx) * (fx_h[:, 1:] - fx_h[:, :-1]) + (dt / self.cfg.dy) * (fy_h[1:, :] - fy_h[:-1, :])
-        self.hu -= (dt / self.cfg.dx) * (fx_hu[:, 1:] - fx_hu[:, :-1]) + (dt / self.cfg.dy) * (fy_hu[1:, :] - fy_hu[:-1, :])
-        self.hv -= (dt / self.cfg.dx) * (fx_hv[:, 1:] - fx_hv[:, :-1]) + (dt / self.cfg.dy) * (fy_hv[1:, :] - fy_hv[:-1, :])
+        h_roi -= (dt / self.cfg.dx) * (fx_h[:, 1:] - fx_h[:, :-1]) + (dt / self.cfg.dy) * (fy_h[1:, :] - fy_h[:-1, :])
+        hu_roi -= (dt / self.cfg.dx) * (fx_hu[:, 1:] - fx_hu[:, :-1]) + (dt / self.cfg.dy) * (fy_hu[1:, :] - fy_hu[:-1, :])
+        hv_roi -= (dt / self.cfg.dx) * (fx_hv[:, 1:] - fx_hv[:, :-1]) + (dt / self.cfg.dy) * (fy_hv[1:, :] - fy_hv[:-1, :])
 
-        self.hu -= (dt / self.cfg.dx) * (sx[:, 1:] - sx[:, :-1])
-        self.hv -= (dt / self.cfg.dy) * (sy[1:, :] - sy[:-1, :])
+        hu_roi -= (dt / self.cfg.dx) * (sx[:, 1:] - sx[:, :-1])
+        hv_roi -= (dt / self.cfg.dy) * (sy[1:, :] - sy[:-1, :])
 
-        self.h = np.maximum(self.h, 0.0)
-        dry = self.h < EPS
-        self.hu[dry] = 0.0
-        self.hv[dry] = 0.0
+        h_roi = np.maximum(h_roi, 0.0)
+        dry = h_roi < EPS
+        hu_roi[dry] = 0.0
+        hv_roi[dry] = 0.0
+
+        # Escribir de vuelta en el dominio global
+        self.h[roi] = h_roi
+        self.hu[roi] = hu_roi
+        self.hv[roi] = hv_roi
 
     def _apply_sources(self, dt: float) -> None:
+        roi = self.roi_slices
         cell_area = self.cfg.dx * self.cfg.dy
 
+        # Lluvia solo en ROI
         if self.cfg.rain_rate > 0.0:
             rain_depth = self.cfg.rain_rate * dt
-            self.h += rain_depth
+            self.h[roi] += rain_depth
             self._cum_rain_mass += float(rain_depth * self.cfg.nx * self.cfg.ny * cell_area)
 
+        # Fuente puntual: si está dentro del ROI
         if self.cfg.point_source_flow_rate is not None and self.cfg.point_source_row is not None and self.cfg.point_source_col is not None:
             r = int(np.clip(self.cfg.point_source_row, 0, self.cfg.ny - 1))
             c = int(np.clip(self.cfg.point_source_col, 0, self.cfg.nx - 1))
-            q = max(float(self.cfg.point_source_flow_rate(self.time)), 0.0)
-            added_depth = q * dt / max(cell_area, 1e-12)
-            self.h[r, c] += added_depth
-            self._cum_point_source_mass += q * dt
+            if (roi[0].start <= r < roi[0].stop) and (roi[1].start <= c < roi[1].stop):
+                q = max(float(self.cfg.point_source_flow_rate(self.time)), 0.0)
+                added_depth = q * dt / max(cell_area, 1e-12)
+                self.h[r, c] += added_depth
+                self._cum_point_source_mass += q * dt
 
-        self.h, self.cum_infiltration, _ = apply_infiltration(self.h, self.cum_infiltration, dt, self.infiltration)
+        # Infiltración solo en ROI
+        h_roi, cum_inf_roi, _ = apply_infiltration(self.h[roi], self.cum_infiltration[roi], dt, self.infiltration)
+        self.h[roi] = h_roi
+        self.cum_infiltration[roi] = cum_inf_roi
 
+        # Fricción solo en ROI
         if self.cfg.friction_model == "manning":
-            self.hu, self.hv = apply_manning(self.hu, self.hv, self.h, dt, self.cfg.manning_n, self.cfg.g)
+            hu_roi, hv_roi = apply_manning(self.hu[roi], self.hv[roi], self.h[roi], dt, self.cfg.manning_n, self.cfg.g)
+            self.hu[roi] = hu_roi
+            self.hv[roi] = hv_roi
         elif self.cfg.friction_model == "darcy-weisbach":
-            self.hu, self.hv = apply_darcy_weisbach(self.hu, self.hv, self.h, dt, self.cfg.darcy_f)
+            hu_roi, hv_roi = apply_darcy_weisbach(self.hu[roi], self.hv[roi], self.h[roi], dt, self.cfg.darcy_f)
+            self.hu[roi] = hu_roi
+            self.hv[roi] = hv_roi
 
+        # Evaporación/degradación solo en ROI
         sink_rate = self.cfg.evaporation_rate + self.cfg.degradation_rate
         if sink_rate > 0.0:
             sink_depth = sink_rate * dt
-            removed_depth = np.minimum(self.h, sink_depth)
-            self.h -= removed_depth
+            removed_depth = np.minimum(self.h[roi], sink_depth)
+            self.h[roi] -= removed_depth
             self._cum_evap_deg_mass += float(np.sum(removed_depth) * cell_area)
 
     def step(self) -> float:
@@ -166,9 +218,15 @@ class OilSpillSolver:
 
     def run(self) -> dict[str, float]:
         initial_mass = self.total_mass
+        step_count = 0
         while self.time < self.cfg.t_end - 1e-12:
             if self.step() <= 0.0:
                 break
+            step_count += 1
+            # Actualizar ROI cada paso
+            self._update_roi()
+            if step_count % 10 == 0:
+                print(f"[Solver] Paso {step_count} | t={self.time:.2f} | max(h)={np.max(self.h):.4e}")
 
         final_mass = self.total_mass
         infil_mass = float(np.sum(self.cum_infiltration) * self.cfg.dx * self.cfg.dy)
