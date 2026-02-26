@@ -10,6 +10,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from fullswof_oil.infiltration import InfiltrationModel
 from fullswof_oil.solver import OilSpillSolver, SolverConfig
@@ -421,7 +426,7 @@ def run(args: argparse.Namespace) -> None:
     )
 
     solver = OilSpillSolver(cfg, h0, z=dem, infiltration=infil)
-    outputs, summary = simulate_with_snapshots(solver, snapshot_interval=args.snapshot_interval)
+    outputs, summary = solver.run(snapshot_interval=args.snapshot_interval)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -459,7 +464,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dem", default=dem_path, help="Path to DEM GeoTIFF")
     p.add_argument("--out-dir", default="outputs_dem_test")
     p.add_argument("--decimate", type=int, default=1)
-    p.add_argument("--t-end", type=float, default=2000.0)
+    p.add_argument("--t-end", type=float, default=100.0)
     p.add_argument("--cfl", type=float, default=0.3)
     p.add_argument("--manning-n", type=float, default=0.03)
     p.add_argument("--k-oil", type=float, default=5e-6)
