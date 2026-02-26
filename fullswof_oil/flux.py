@@ -6,7 +6,9 @@ EPS = 1e-12
 
 
 def _vel(hu: np.ndarray, h: np.ndarray) -> np.ndarray:
-    return np.where(h > EPS, hu / h, 0.0)
+    out = np.zeros_like(hu, dtype=float)
+    np.divide(hu, h, out=out, where=h > EPS)
+    return out
 
 
 def physical_flux_x(h: np.ndarray, hu: np.ndarray, hv: np.ndarray, g: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

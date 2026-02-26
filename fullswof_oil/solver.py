@@ -16,6 +16,12 @@ from .reconstruction import (
 EPS = 1e-10
 
 
+def _safe_divide(num: np.ndarray, den: np.ndarray, thresh: float = EPS) -> np.ndarray:
+    out = np.zeros_like(num, dtype=float)
+    np.divide(num, den, out=out, where=den > thresh)
+    return out
+
+
 @dataclass
 class SolverConfig:
     nx: int
@@ -59,8 +65,8 @@ class OilSpillSolver:
         return hp, hup, hvp
 
     def max_wave_speed(self) -> float:
-        u = np.where(self.h > EPS, self.hu / self.h, 0.0)
-        v = np.where(self.h > EPS, self.hv / self.h, 0.0)
+        u = _safe_divide(self.hu, self.h)
+        v = _safe_divide(self.hv, self.h)
         c = np.sqrt(self.cfg.g * np.maximum(self.h, 0.0))
         return float(np.max(np.maximum(np.abs(u) + c, np.abs(v) + c)))
 
@@ -86,10 +92,10 @@ class OilSpillSolver:
         z_r = zp[1:-1, 1:]
 
         h_l_hr, h_r_hr = hydrostatic_reconstruction(h_l, h_r, z_l, z_r)
-        u_l = np.where(h_l > EPS, hu_l / h_l, 0.0)
-        u_r = np.where(h_r > EPS, hu_r / h_r, 0.0)
-        v_l = np.where(h_l > EPS, hv_l / h_l, 0.0)
-        v_r = np.where(h_r > EPS, hv_r / h_r, 0.0)
+        u_l = _safe_divide(hu_l, h_l)
+        u_r = _safe_divide(hu_r, h_r)
+        v_l = _safe_divide(hv_l, h_l)
+        v_r = _safe_divide(hv_r, h_r)
 
         fx_h, fx_hu, fx_hv, _ = rusanov_flux_x(h_l_hr, h_l_hr * u_l, h_l_hr * v_l, h_r_hr, h_r_hr * u_r, h_r_hr * v_r, self.cfg.g)
         sx = centered_topography_source_x(h_l, h_r, h_l_hr, h_r_hr, z_l, z_r, self.cfg.g)
@@ -105,10 +111,10 @@ class OilSpillSolver:
         z_t = zp[1:, 1:-1]
 
         h_b_hr, h_t_hr = hydrostatic_reconstruction(h_b, h_t, z_b, z_t)
-        u_b = np.where(h_b > EPS, hu_b / h_b, 0.0)
-        u_t = np.where(h_t > EPS, hu_t / h_t, 0.0)
-        v_b = np.where(h_b > EPS, hv_b / h_b, 0.0)
-        v_t = np.where(h_t > EPS, hv_t / h_t, 0.0)
+        u_b = _safe_divide(hu_b, h_b)
+        u_t = _safe_divide(hu_t, h_t)
+        v_b = _safe_divide(hv_b, h_b)
+        v_t = _safe_divide(hv_t, h_t)
 
         fy_h, fy_hu, fy_hv, _ = rusanov_flux_y(h_b_hr, h_b_hr * u_b, h_b_hr * v_b, h_t_hr, h_t_hr * u_t, h_t_hr * v_t, self.cfg.g)
         sy = centered_topography_source_y(h_b, h_t, h_b_hr, h_t_hr, z_b, z_t, self.cfg.g)
