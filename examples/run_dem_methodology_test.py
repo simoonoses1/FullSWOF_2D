@@ -186,6 +186,8 @@ def export_mp4(outputs, dem_array, profile, out_path, fps=2, scale_mm=True, perc
             xmax = xmin + transform.a * dem_array.shape[1]
             ymin = ymax + transform.e * dem_array.shape[0]
             extent = (xmin, xmax, ymin, ymax)
+    if "h" not in outputs[-1] or outputs[-1]["h"] is None:
+        return
     h_last = outputs[-1]["h"] if bounds is None else outputs[-1]["h"][r0:r1, c0:c1]
     h_sample = h_last * (1000.0 if scale_mm else 1.0)
     vmin_h, vmax_h = _auto_vrange(h_sample, percentile=percentile)
@@ -248,7 +250,9 @@ def export_mp4_3d(outputs, dem_array, profile, out_path, fps=2, scale_mm=True, p
     else:
         r0, r1, c0, c1 = bounds
 
-    dem_used = dem_array[r0:r1, c0:c1]
+    dem_used = dem_array[r0:r1, c0:c1] if dem_array is not None else None
+    if dem_used is None:
+        return
     nr, nc = dem_used.shape
     step_r = max(1, int(math.ceil(nr / max_grid_size)))
     step_c = max(1, int(math.ceil(nc / max_grid_size)))
@@ -269,7 +273,11 @@ def export_mp4_3d(outputs, dem_array, profile, out_path, fps=2, scale_mm=True, p
 
     sampled_positive = []
     for snap in outputs:
-        h_sub = snap["h"][r0:r1, c0:c1][::step_r, ::step_c]
+        h_full = snap.get("h")
+        if h_full is None:
+            continue
+        h_crop = h_full[r0:r1, c0:c1]
+        h_sub = h_crop[::step_r, ::step_c]
         h_units = h_sub * (1000.0 if scale_mm else 1.0)
         pos = h_units[h_units > 0]
         if pos.size:
@@ -280,8 +288,19 @@ def export_mp4_3d(outputs, dem_array, profile, out_path, fps=2, scale_mm=True, p
         min_pos = float(np.nanmin(h_all))
         vmin_h = max(min_pos, vmax_h * 1e-4)
     else:
-        vmin_h, vmax_h = (1e-6, 1.0)
-    norm_h = LogNorm(vmin=vmin_h, vmax=vmax_h) if use_log else Normalize(vmin=0.0, vmax=vmax_h)
+        vmin_h, vmax_h = (None, None)
+    if use_log and vmin_h is not None and vmax_h is not None:
+        norm_h = LogNorm(vmin=vmin_h, vmax=vmax_h)
+    else:
+        vmax_lin = vmax_h if vmax_h is not None and np.isfinite(vmax_h) and vmax_h > 0 else 1.0
+        norm_h = Normalize(vmin=0.0, vmax=vmax_lin)
+
+    if vmax_h is not None and np.isfinite(vmax_h) and vmax_h > 0:
+        scale_units = (1000.0 if scale_mm else 1.0)
+        base_thr = max(wet_threshold * scale_units, vmax_h * 1e-6)
+        display_threshold_units = max(base_thr, 0.2 * vmin_h) if (vmin_h is not None and np.isfinite(vmin_h)) else base_thr
+    else:
+        display_threshold_units = wet_threshold * (1000.0 if scale_mm else 1.0)
 
     fig = plt.figure(figsize=(10, 7))
     ax = fig.add_subplot(111, projection="3d", computed_zorder=False)
@@ -301,22 +320,42 @@ def export_mp4_3d(outputs, dem_array, profile, out_path, fps=2, scale_mm=True, p
     ax.view_init(elev=view_elev, azim=view_azim)
     ax.set_box_aspect((1, 1, 0.35))
 
-    z_dem_min = float(np.nanmin(dem_sub))
-    z_dem_max = float(np.nanmax(dem_sub))
-    z_span = max(z_dem_max - z_dem_min, 1e-3)
-    z_lift_min = max(float(min_lift_abs), max(0.0, min_lift_ratio * z_span))
-    ax.set_zlim(z_dem_min - 0.02 * z_span, z_dem_max + max(0.1 * z_span, z_lift_min * 1.2))
+    z_span = 1.0
+    z_lift_min = 0.0
+    if np.isfinite(dem_sub).any():
+        z_dem_min = float(np.nanmin(dem_sub))
+        z_dem_max = float(np.nanmax(dem_sub))
+        z_span = max(z_dem_max - z_dem_min, 1e-3)
+        z_lift_min = max(float(min_lift_abs), max(0.0, min_lift_ratio * z_span))
+        z_extra = z_lift_min
+        ax.set_zlim(z_dem_min - 0.02 * z_span, z_dem_max + max(0.1 * z_span, z_extra * 1.2))
 
     def _draw_spill(frame_idx):
-        h_sub = outputs[frame_idx]["h"][r0:r1, c0:c1][::step_r, ::step_c]
+        h_full = outputs[frame_idx].get("h")
+        if h_full is None:
+            return None
+        h_crop = h_full[r0:r1, c0:c1]
+        h_sub = h_crop[::step_r, ::step_c]
         h_plot = h_sub * (1000.0 if scale_mm else 1.0)
-        wet = np.isfinite(h_plot) & (h_plot >= wet_threshold * (1000.0 if scale_mm else 1.0))
+        wet = np.isfinite(h_plot) & (h_plot >= display_threshold_units)
         if not np.any(wet):
             return None
-        z_spill = np.where(wet, dem_sub + z_lift_min + flow_vertical_exaggeration * (h_sub if not scale_mm else h_sub), np.nan)
-        h_safe = np.where(h_plot > 0.0, h_plot, vmin_h)
-        h_clip = np.clip(h_safe, vmin_h, vmax_h)
-        norm_vals = np.clip(np.asarray(norm_h(h_clip), dtype=float), 0.0, 1.0)
+        z_spill = dem_sub + z_lift_min
+        if hasattr(norm_h, "vmin") and norm_h.vmin is not None:
+            vmin_safe = float(norm_h.vmin)
+        else:
+            vmin_safe = 0.0
+        if hasattr(norm_h, "vmax") and norm_h.vmax is not None and np.isfinite(norm_h.vmax):
+            vmax_safe = float(norm_h.vmax)
+        else:
+            vmax_safe = float(np.nanmax(h_plot)) if np.isfinite(h_plot).any() else max(vmin_safe, 1.0)
+        if vmax_safe <= vmin_safe:
+            vmax_safe = vmin_safe + 1e-12
+        h_safe = np.where(h_plot > 0.0, h_plot, vmin_safe)
+        h_clip = np.clip(h_safe, vmin_safe, vmax_safe)
+        norm_vals = np.asarray(norm_h(h_clip), dtype=float)
+        norm_vals = np.clip(norm_vals, 0.0, 1.0)
+        z_spill = np.where(wet, z_spill, np.nan)
         colors = plt.cm.plasma(norm_vals)
         colors[..., 3] = np.where(wet, 1.0, 0.0)
         spill_artist = ax.plot_surface(X, Y, z_spill, facecolors=colors, linewidth=0, edgecolor="none", antialiased=True, shade=False, zorder=10)
