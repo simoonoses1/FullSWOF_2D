@@ -36,19 +36,25 @@ def main() -> None:
         manning_n=0.08,
         evaporation_rate=1e-7,
         degradation_rate=1e-7,
+        rain_rate=0.0,
     )
-    infiltration = InfiltrationModel(saturated_hydraulic_conductivity=2e-6, capillary_suction=0.03, porosity_deficit=0.25)
+    infiltration = InfiltrationModel(
+        saturated_hydraulic_conductivity=2e-6,
+        capillary_suction=0.03,
+        porosity_deficit=0.25,
+    )
     solver, summary = run_simulation(config, h0, z=dem, infiltration=infiltration)
 
-    Path("outputs").mkdir(exist_ok=True)
-    save_raster_npy("outputs/final_oil_thickness.npy", solver.h)
+    out = Path("outputs")
+    out.mkdir(exist_ok=True)
+    save_raster_npy(out / "final_oil_thickness.npy", solver.h)
 
     plt.figure(figsize=(9, 4))
     plt.imshow(solver.h, origin="lower", cmap="inferno")
     plt.colorbar(label="Oil thickness [m]")
     plt.title("Final oil thickness after 1000 s")
     plt.tight_layout()
-    plt.savefig("outputs/final_oil_thickness.png", dpi=150)
+    plt.savefig(out / "final_oil_thickness.png", dpi=150)
 
     print("Mass balance summary:")
     for k, v in summary.items():

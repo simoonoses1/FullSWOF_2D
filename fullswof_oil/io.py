@@ -4,18 +4,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-
-
-try:
-    import yaml
-except Exception:  # pragma: no cover
-    yaml = None
+import yaml
 
 
 def load_params(path: str | Path) -> dict[str, Any]:
     path = Path(path)
-    if yaml is None:
-        raise RuntimeError("PyYAML is required to read params.yaml")
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
