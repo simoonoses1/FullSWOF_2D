@@ -71,3 +71,21 @@ def test_mass_balance_with_infiltration_and_uniform_sink() -> None:
     _, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=infil)
 
     assert abs(summary["mass_closure_error_pct"]) <= 1.0
+
+
+def test_point_source_mass_accounting() -> None:
+    ny, nx = 20, 20
+    h0 = np.zeros((ny, nx), dtype=float)
+
+    def q_of_t(t: float) -> float:
+        return 0.2 if t <= 10.0 else 0.0
+
+    cfg = SolverConfig(
+        nx=nx, ny=ny, dx=1.0, dy=1.0, t_end=20.0, cfl=0.35,
+        point_source_row=ny // 2, point_source_col=nx // 2, point_source_flow_rate=q_of_t,
+        evaporation_rate=0.0, degradation_rate=0.0, rain_rate=0.0
+    )
+    _, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=InfiltrationModel())
+
+    assert summary["point_source_input_mass"] > 0.0
+    assert abs(summary["mass_closure_error_pct"]) <= 1.0

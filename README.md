@@ -50,3 +50,19 @@ python run_example.py
 ```
 
 A compatibility launcher `Examples/run_example.py` is provided and forwards execution to `examples/run_example.py` while adding the repository root to `PYTHONPATH`.
+
+
+## DEM methodology test
+
+A DEM-based methodology test script is available:
+
+```bash
+python examples/run_dem_methodology_test.py --dem /path/to/dem.tif --out-dir outputs_dem_test
+```
+
+Key behavior:
+- Loads DEM from GeoTIFF (optional decimation).
+- Validates/fills nodata cells locally.
+- Runs `fullswof_oil` with hydrostatic FV solver over DEM.
+- Uses a point source inflow `Q(t)` (default: 0.5 m3/s up to 100 s).
+- Saves final `h`, cumulative infiltration, diagnostic map PNG, and `summary.json`.

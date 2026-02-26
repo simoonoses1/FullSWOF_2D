@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 
@@ -37,6 +38,9 @@ class SolverConfig:
     evaporation_rate: float = 0.0
     degradation_rate: float = 0.0
     rain_rate: float = 0.0
+    point_source_row: int | None = None
+    point_source_col: int | None = None
+    point_source_flow_rate: Callable[[float], float] | None = None
 
 
 class OilSpillSolver:
@@ -53,6 +57,7 @@ class OilSpillSolver:
 
         self._cum_rain_mass = 0.0
         self._cum_evap_deg_mass = 0.0
+        self._cum_point_source_mass = 0.0
 
     def _apply_wall_boundaries(self, h: np.ndarray, hu: np.ndarray, hv: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         hp = np.pad(h, ((1, 1), (1, 1)), mode="edge")
@@ -121,7 +126,15 @@ class OilSpillSolver:
         if self.cfg.rain_rate > 0.0:
             rain_depth = self.cfg.rain_rate * dt
             self.h += rain_depth
-            self._cum_rain_mass += float(np.sum(np.full_like(self.h, rain_depth)) * cell_area)
+            self._cum_rain_mass += float(rain_depth * self.cfg.nx * self.cfg.ny * cell_area)
+
+        if self.cfg.point_source_flow_rate is not None and self.cfg.point_source_row is not None and self.cfg.point_source_col is not None:
+            r = int(np.clip(self.cfg.point_source_row, 0, self.cfg.ny - 1))
+            c = int(np.clip(self.cfg.point_source_col, 0, self.cfg.nx - 1))
+            q = max(float(self.cfg.point_source_flow_rate(self.time)), 0.0)
+            added_depth = q * dt / max(cell_area, 1e-12)
+            self.h[r, c] += added_depth
+            self._cum_point_source_mass += q * dt
 
         self.h, self.cum_infiltration, _ = apply_infiltration(self.h, self.cum_infiltration, dt, self.infiltration)
 
@@ -159,14 +172,16 @@ class OilSpillSolver:
 
         final_mass = self.total_mass
         infil_mass = float(np.sum(self.cum_infiltration) * self.cfg.dx * self.cfg.dy)
-        closure = final_mass + infil_mass + self._cum_evap_deg_mass - initial_mass - self._cum_rain_mass
+        total_inputs = initial_mass + self._cum_rain_mass + self._cum_point_source_mass
+        closure = final_mass + infil_mass + self._cum_evap_deg_mass - total_inputs
         return {
             "initial_surface_mass": initial_mass,
             "final_surface_mass": final_mass,
             "infiltrated_mass": infil_mass,
             "evaporation_degradation_mass": self._cum_evap_deg_mass,
             "rain_input_mass": self._cum_rain_mass,
-            "mass_closure_error_pct": 100.0 * closure / max(initial_mass + self._cum_rain_mass, 1e-12),
+            "point_source_input_mass": self._cum_point_source_mass,
+            "mass_closure_error_pct": 100.0 * closure / max(total_inputs, 1e-12),
             "max_cfl": max(self.cfl_history) if self.cfl_history else 0.0,
         }
 
