@@ -1,0 +1,8 @@
+Authors of the FullSWOF_2D software: 
+
+Olivier Delestre
+Marie Rousseau
+Ulrich Razafison
+Christian Laguerre
+Frédéric Darboux
+Carine Lucas
