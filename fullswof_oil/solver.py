@@ -41,6 +41,7 @@ class SolverConfig:
     point_source_row: int | None = None
     point_source_col: int | None = None
     point_source_flow_rate: Callable[[float], float] | None = None
+    roi_buffer_m: float = 500.0
 
 
 class OilSpillSolver:
@@ -58,6 +59,31 @@ class OilSpillSolver:
         self._cum_rain_mass = 0.0
         self._cum_evap_deg_mass = 0.0
         self._cum_point_source_mass = 0.0
+
+        # ROI dinámico: inicializar como todo el dominio
+        self.roi_slices = (slice(0, self.h.shape[0]), slice(0, self.h.shape[1]))
+
+    def _update_roi(self, threshold: float = 1e-6):
+        """Actualiza el ROI dinámico alrededor del derrame (donde h > threshold), expandido con buffer."""
+        active = self.h > threshold
+        if not np.any(active):
+            # Si no hay celdas activas, usar todo el dominio
+            self.roi_slices = (slice(0, self.h.shape[0]), slice(0, self.h.shape[1]))
+            return
+        rows, cols = np.where(active)
+        min_row, max_row = rows.min(), rows.max()
+        min_col, max_col = cols.min(), cols.max()
+        # Calcular buffer en celdas
+        buffer_cells_y = int(np.ceil(self.cfg.roi_buffer_m / self.cfg.dy))
+        buffer_cells_x = int(np.ceil(self.cfg.roi_buffer_m / self.cfg.dx))
+        roi_row_start = max(0, min_row - buffer_cells_y)
+        roi_row_end = min(self.h.shape[0], max_row + buffer_cells_y + 1)
+        roi_col_start = max(0, min_col - buffer_cells_x)
+        roi_col_end = min(self.h.shape[1], max_col + buffer_cells_x + 1)
+        self.roi_slices = (slice(roi_row_start, roi_row_end), slice(roi_col_start, roi_col_end))
+        # Debug print (cada 10 pasos)
+        if self.time > 0 and int(self.time) % 10 == 0:
+            print(f"[Solver] ROI actualizado: filas {roi_row_start}-{roi_row_end}, cols {roi_col_start}-{roi_col_end}")
 
     def _apply_wall_boundaries(self, h: np.ndarray, hu: np.ndarray, hv: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         hp = np.pad(h, ((1, 1), (1, 1)), mode="edge")
@@ -161,6 +187,7 @@ class OilSpillSolver:
 
         self._apply_fluxes(dt)
         self._apply_sources(dt)
+        self._update_roi()
         self.time += dt
         return dt
 

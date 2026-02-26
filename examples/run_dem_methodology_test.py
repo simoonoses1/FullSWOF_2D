@@ -412,6 +412,7 @@ def run(args: argparse.Namespace) -> None:
         point_source_row=source_row,
         point_source_col=source_col,
         point_source_flow_rate=q_of_t,
+        roi_buffer_m=args.roi_buffer_m,
     )
     infil = InfiltrationModel(
         saturated_hydraulic_conductivity=args.k_oil,
@@ -454,7 +455,8 @@ def run(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Run fullswof_oil methodology test over DEM")
-    p.add_argument("--dem", required=True, help="Path to DEM GeoTIFF")
+    dem_path = r"G:\.shortcut-targets-by-id\1iuaWNgH0tpogcW8LIBph9VwoSFKajE9K\NOVA\02 - Shell\Proceso\Informes ambientales\002_MTD_ P03CdL-A\Entradas\P03CdL-A\Anal Prelim\CW502_28082024\AnalisisPreliminarLocCDL\Archivos de Ubicacion\TIF\MDT5m_Rev00.tif"
+    p.add_argument("--dem", default=dem_path, help="Path to DEM GeoTIFF")
     p.add_argument("--out-dir", default="outputs_dem_test")
     p.add_argument("--decimate", type=int, default=1)
     p.add_argument("--t-end", type=float, default=2000.0)
@@ -469,6 +471,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source-col", type=int, default=None)
     p.add_argument("--snapshot-interval", type=float, default=10.0)
     p.add_argument("--video-fps", type=int, default=2)
+    p.add_argument("--roi-buffer-m", type=float, default=500.0, help="Buffer de seguridad para el ROI dinámico (m)")
     return p
 
 
