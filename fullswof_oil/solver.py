@@ -92,13 +92,43 @@ class OilSpillSolver:
         return hp, hup, hvp
 
     def max_wave_speed(self) -> float:
-        u = _safe_divide(self.hu, self.h)
-        v = _safe_divide(self.hv, self.h)
-        c = np.sqrt(self.cfg.g * np.maximum(self.h, 0.0))
+        use_roi = self.roi_slices is not None
+        if use_roi:
+            h_roi = self.h[self.roi_slices]
+            hu_roi = self.hu[self.roi_slices]
+            hv_roi = self.hv[self.roi_slices]
+            use_roi = h_roi.size > 0
+
+        if use_roi:
+            h_eval = h_roi
+            hu_eval = hu_roi
+            hv_eval = hv_roi
+        else:
+            h_eval = self.h
+            hu_eval = self.hu
+            hv_eval = self.hv
+
+        u = _safe_divide(hu_eval, h_eval)
+        v = _safe_divide(hv_eval, h_eval)
+        c = np.sqrt(self.cfg.g * np.maximum(h_eval, 0.0))
         return float(np.max(np.maximum(np.abs(u) + c, np.abs(v) + c)))
 
     def compute_dt(self) -> float:
-        speed = self.max_wave_speed()
+        use_roi = self.roi_slices is not None
+        if use_roi:
+            h_roi = self.h[self.roi_slices]
+            hu_roi = self.hu[self.roi_slices]
+            hv_roi = self.hv[self.roi_slices]
+            use_roi = h_roi.size > 0
+
+        if use_roi:
+            u = _safe_divide(hu_roi, h_roi)
+            v = _safe_divide(hv_roi, h_roi)
+            c = np.sqrt(self.cfg.g * np.maximum(h_roi, 0.0))
+            speed = float(np.max(np.maximum(np.abs(u) + c, np.abs(v) + c)))
+        else:
+            speed = self.max_wave_speed()
+
         if speed < 1e-14:
             return min(self.cfg.t_end - self.time, 0.1)
         dt_cfl = self.cfg.cfl * min(self.cfg.dx, self.cfg.dy) / speed
