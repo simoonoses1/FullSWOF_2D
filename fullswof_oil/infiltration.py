@@ -10,12 +10,12 @@ class InfiltrationModel:
     saturated_hydraulic_conductivity: float = 0.0  # m/s
     capillary_suction: float = 0.0  # m
     porosity_deficit: float = 0.0  # [-]
+    min_cumulative_depth: float = 1e-4  # m, regularization to avoid singular initial rates
 
     def infiltration_rate(self, h: np.ndarray, cumulative: np.ndarray) -> np.ndarray:
-        """Green-Ampt-like infiltration rate [m/s]."""
         if self.saturated_hydraulic_conductivity <= 0.0:
             return np.zeros_like(h)
-        f = np.maximum(cumulative, 1e-9)
+        f = np.maximum(cumulative, self.min_cumulative_depth)
         green_ampt = self.saturated_hydraulic_conductivity * (1.0 + (self.capillary_suction * self.porosity_deficit) / f)
         return np.maximum(green_ampt, 0.0)
 

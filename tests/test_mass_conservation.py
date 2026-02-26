@@ -55,4 +55,19 @@ def test_cfl_stability_respected() -> None:
     solver, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=InfiltrationModel())
 
     assert solver.cfl_history, "CFL history should not be empty"
-    assert summary["max_cfl"] <= cfg.cfl * 1.05
+    assert 0.0 < summary["max_cfl"] <= cfg.cfl * 1.05
+
+
+def test_mass_balance_with_infiltration_and_uniform_sink() -> None:
+    ny, nx = 30, 30
+    h0 = np.zeros((ny, nx), dtype=float)
+    h0[10:20, 10:20] = 0.04
+
+    cfg = SolverConfig(
+        nx=nx, ny=ny, dx=1.0, dy=1.0, t_end=40.0, cfl=0.4,
+        evaporation_rate=2e-6, degradation_rate=1e-6, rain_rate=0.0
+    )
+    infil = InfiltrationModel(saturated_hydraulic_conductivity=1e-6, capillary_suction=0.02, porosity_deficit=0.2)
+    _, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=infil)
+
+    assert abs(summary["mass_closure_error_pct"]) <= 1.0
