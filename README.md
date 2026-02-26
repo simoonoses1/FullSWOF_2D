@@ -34,3 +34,19 @@ The example produces:
 - Sources: friction + infiltration + optional evaporation/degradation sinks
 
 This code is intended for sensitivity analysis and method prototyping.
+
+## Running without installation
+
+If you run from the repository root:
+
+```bash
+python examples/run_example.py
+```
+
+If you are inside `Examples/` (as in Windows prompt examples):
+
+```bash
+python run_example.py
+```
+
+A compatibility launcher `Examples/run_example.py` is provided and forwards execution to `examples/run_example.py` while adding the repository root to `PYTHONPATH`.

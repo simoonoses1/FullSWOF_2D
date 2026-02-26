@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+# Allow running this script directly without installing the package.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -45,7 +51,7 @@ def main() -> None:
     )
     solver, summary = run_simulation(config, h0, z=dem, infiltration=infiltration)
 
-    out = Path("outputs")
+    out = REPO_ROOT / "outputs"
     out.mkdir(exist_ok=True)
     save_raster_npy(out / "final_oil_thickness.npy", solver.h)
 
