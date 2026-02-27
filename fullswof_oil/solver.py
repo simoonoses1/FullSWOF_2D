@@ -8,6 +8,7 @@ import numpy as np
 from .flux import rusanov_flux_x, rusanov_flux_y
 from .friction import apply_darcy_weisbach, apply_manning
 from .infiltration import InfiltrationModel, apply_infiltration
+from .kernels_numba import NUMBA_AVAILABLE, conservative_update_numba, max_wave_speed_numba
 from .reconstruction import (
     centered_topography_source_x,
     centered_topography_source_y,
@@ -42,6 +43,7 @@ class SolverConfig:
     point_source_col: int | None = None
     point_source_flow_rate: Callable[[float], float] | None = None
     roi_buffer_m: float = 500.0
+    execution_mode: str = "numpy"
 
 
 class OilSpillSolver:
@@ -55,6 +57,11 @@ class OilSpillSolver:
         self.cum_infiltration = np.zeros_like(self.h)
         self.time = 0.0
         self.cfl_history: list[float] = []
+        if self.cfg.execution_mode not in {"numpy", "numba"}:
+            raise ValueError("execution_mode must be one of {'numpy', 'numba'}")
+        self.execution_mode = self.cfg.execution_mode
+        if self.execution_mode == "numba" and not NUMBA_AVAILABLE:
+            self.execution_mode = "numpy"
 
         self._cum_rain_mass = 0.0
         self._cum_evap_deg_mass = 0.0
@@ -92,6 +99,8 @@ class OilSpillSolver:
         return hp, hup, hvp
 
     def max_wave_speed(self) -> float:
+        if self.execution_mode == "numba":
+            return float(max_wave_speed_numba(self.h, self.hu, self.hv, self.cfg.g, EPS))
         u = _safe_divide(self.hu, self.h)
         v = _safe_divide(self.hv, self.h)
         c = np.sqrt(self.cfg.g * np.maximum(self.h, 0.0))
@@ -111,6 +120,23 @@ class OilSpillSolver:
         hu_roi = self.hu[roi]
         hv_roi = self.hv[roi]
         z_roi = self.z[roi]
+
+        if self.execution_mode == "numba":
+            h_new, hu_new, hv_new = conservative_update_numba(
+                h_roi,
+                hu_roi,
+                hv_roi,
+                z_roi,
+                dt,
+                self.cfg.dx,
+                self.cfg.dy,
+                self.cfg.g,
+                EPS,
+            )
+            self.h[roi] = h_new
+            self.hu[roi] = hu_new
+            self.hv[roi] = hv_new
+            return
 
         hp, hup, hvp = self._apply_wall_boundaries(h_roi, hu_roi, hv_roi)
         zp = np.pad(z_roi, ((1, 1), (1, 1)), mode="edge")
