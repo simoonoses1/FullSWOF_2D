@@ -25,7 +25,7 @@ def test_mass_conservation_no_sinks_within_one_percent() -> None:
     )
     infiltration = InfiltrationModel(0.0, 0.0, 0.0)
 
-    _, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=infiltration)
+    _, _, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=infiltration)
     rel_err = abs(summary["mass_closure_error_pct"])
     assert rel_err <= 1.0, f"mass conservation error too large: {rel_err:.3f}%"
 
@@ -38,7 +38,7 @@ def test_lake_at_rest_well_balanced_on_sloped_dem() -> None:
     h0 = np.maximum(eta0 - z, 0.0)
 
     cfg = SolverConfig(nx=nx, ny=ny, dx=1.0, dy=1.0, t_end=20.0, cfl=0.45)
-    solver, _ = run_simulation(cfg, h0, z=z, infiltration=InfiltrationModel())
+    solver, _, _ = run_simulation(cfg, h0, z=z, infiltration=InfiltrationModel())
 
     eta_end = solver.h + z
     wet = h0 > 1e-8
@@ -52,7 +52,7 @@ def test_cfl_stability_respected() -> None:
     h0[8:12, 8:12] = 0.05
 
     cfg = SolverConfig(nx=nx, ny=ny, dx=1.0, dy=1.0, t_end=20.0, cfl=0.4)
-    solver, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=InfiltrationModel())
+    solver, _, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=InfiltrationModel())
 
     assert solver.cfl_history, "CFL history should not be empty"
     assert 0.0 < summary["max_cfl"] <= cfg.cfl * 1.05
@@ -68,7 +68,7 @@ def test_mass_balance_with_infiltration_and_uniform_sink() -> None:
         evaporation_rate=2e-6, degradation_rate=1e-6, rain_rate=0.0
     )
     infil = InfiltrationModel(saturated_hydraulic_conductivity=1e-6, capillary_suction=0.02, porosity_deficit=0.2)
-    _, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=infil)
+    _, _, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=infil)
 
     assert abs(summary["mass_closure_error_pct"]) <= 1.0
 
@@ -85,7 +85,34 @@ def test_point_source_mass_accounting() -> None:
         point_source_row=ny // 2, point_source_col=nx // 2, point_source_flow_rate=q_of_t,
         evaporation_rate=0.0, degradation_rate=0.0, rain_rate=0.0
     )
-    _, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=InfiltrationModel())
+    _, _, summary = run_simulation(cfg, h0, z=np.zeros_like(h0), infiltration=InfiltrationModel())
 
     assert summary["point_source_input_mass"] > 0.0
     assert abs(summary["mass_closure_error_pct"]) <= 1.0
+
+
+def test_execution_mode_selector_accepts_numpy_and_numba() -> None:
+    ny, nx = 16, 16
+    h0 = np.zeros((ny, nx), dtype=float)
+    h0[7:9, 7:9] = 0.02
+
+    cfg_numpy = SolverConfig(nx=nx, ny=ny, dx=1.0, dy=1.0, t_end=2.0, execution_mode="numpy")
+    solver_numpy, _, _ = run_simulation(cfg_numpy, h0, z=np.zeros_like(h0), infiltration=InfiltrationModel())
+
+    cfg_numba = SolverConfig(nx=nx, ny=ny, dx=1.0, dy=1.0, t_end=2.0, execution_mode="numba")
+    solver_numba, _, _ = run_simulation(cfg_numba, h0, z=np.zeros_like(h0), infiltration=InfiltrationModel())
+
+    assert solver_numpy.execution_mode == "numpy"
+    assert solver_numba.execution_mode in {"numpy", "numba"}
+
+
+def test_invalid_execution_mode_raises() -> None:
+    ny, nx = 4, 4
+    h0 = np.zeros((ny, nx), dtype=float)
+    cfg = SolverConfig(nx=nx, ny=ny, dx=1.0, dy=1.0, execution_mode="bad-mode")
+    try:
+        run_simulation(cfg, h0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Expected ValueError for invalid execution_mode")
