@@ -7,6 +7,7 @@ It preserves a finite-volume shallow-layer structure with explicit CFL control a
 
 - `fullswof_oil/solver.py`: time loop, CFL timestep, mass accounting
 - `fullswof_oil/flux.py`: 2D Rusanov fluxes for conservative variables
+- `fullswof_oil/kernels_numba.py`: optional Numba kernels for wave speed and conservative update
 - `fullswof_oil/reconstruction.py`: reconstruction helpers (first-order and MUSCL helper)
 - `fullswof_oil/friction.py`: Manning and Darcy–Weisbach friction closures
 - `fullswof_oil/infiltration.py`: simplified Green–Ampt-like infiltration model
@@ -32,6 +33,28 @@ The example produces:
 - Numerical flux: Rusanov (local Lax–Friedrichs)
 - Time integration: explicit finite-volume with CFL-limited `dt`
 - Sources: friction + infiltration + optional evaporation/degradation sinks
+
+## Execution mode selector (NumPy / Numba)
+
+`SolverConfig` now supports `execution_mode` with values:
+
+- `"numpy"` (default): baseline vectorized implementation.
+- `"numba"`: alternative path using `@njit(parallel=True, fastmath=False)` kernels for:
+  - safe wave-speed estimation,
+  - Rusanov x/y fluxes,
+  - conservative update + topography source terms.
+
+If Numba is unavailable, the solver automatically falls back to `"numpy"`.
+
+## Benchmarking wall time by mode
+
+Run:
+
+```bash
+python examples/benchmark_execution_modes.py
+```
+
+This script reports wall-time for increasing square meshes and prints speedup (`numpy_time / numba_time`).
 
 This code is intended for sensitivity analysis and method prototyping.
 
