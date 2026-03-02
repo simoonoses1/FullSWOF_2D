@@ -110,7 +110,21 @@ class OilSpillSolver:
         return float(np.max(np.maximum(np.abs(u) + c, np.abs(v) + c)))
 
     def compute_dt(self) -> float:
-        speed = self.max_wave_speed()
+        use_roi = self.roi_slices is not None
+        if use_roi:
+            h_roi = self.h[self.roi_slices]
+            hu_roi = self.hu[self.roi_slices]
+            hv_roi = self.hv[self.roi_slices]
+            use_roi = h_roi.size > 0
+
+        if use_roi:
+            u = _safe_divide(hu_roi, h_roi)
+            v = _safe_divide(hv_roi, h_roi)
+            c = np.sqrt(self.cfg.g * np.maximum(h_roi, 0.0))
+            speed = float(np.max(np.maximum(np.abs(u) + c, np.abs(v) + c)))
+        else:
+            speed = self.max_wave_speed()
+
         if speed < 1e-14:
             return min(self.cfg.t_end - self.time, 0.1)
         dt_cfl = self.cfg.cfl * min(self.cfg.dx, self.cfg.dy) / speed
