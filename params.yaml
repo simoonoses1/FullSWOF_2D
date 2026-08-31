@@ -9,6 +9,10 @@ solver:
   friction_model: manning
   manning_n: 0.08
   darcy_f: 0.02
+  fluid_density: 900.0
+  dynamic_viscosity: 0.005
+  yield_stress: 0.0
+  h_viscous_min: 1.0e-4
   evaporation_rate: 1.0e-7
   degradation_rate: 1.0e-7
 

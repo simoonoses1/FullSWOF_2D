@@ -1,0 +1,14 @@
+.venv/
+.pytest_cache/
+**/__pycache__/
+*.py[cod]
+
+# Site inputs and generated simulation products are kept local.
+PHOENIX/*.tif*
+PHOENIX/*.gpkg
+PHOENIX/resultado_*/
+Proyecto_de_Locacion/
+runs_index.json
+
+# Generated example outputs may contain large rasters, arrays, and media.
+Examples/outputs_dem_test/

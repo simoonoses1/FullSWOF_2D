@@ -49,7 +49,7 @@ def main() -> None:
         capillary_suction=0.03,
         porosity_deficit=0.25,
     )
-    solver, summary = run_simulation(config, h0, z=dem, infiltration=infiltration)
+    solver, _, summary = run_simulation(config, h0, z=dem, infiltration=infiltration)
 
     out = REPO_ROOT / "outputs"
     out.mkdir(exist_ok=True)
@@ -64,7 +64,10 @@ def main() -> None:
 
     print("Mass balance summary:")
     for k, v in summary.items():
-        print(f"  {k}: {v:.6e}")
+        if isinstance(v, (int, float, np.floating)):
+            print(f"  {k}: {v:.6e}")
+        else:
+            print(f"  {k}: {v}")
 
 
 if __name__ == "__main__":

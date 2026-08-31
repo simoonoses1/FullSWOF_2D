@@ -8,7 +8,7 @@ import numpy as np
 
 from .backend import asarray, maximum, pad, resolve_backend, set_backend, sqrt, to_numpy, zeros_like
 from .flux import rusanov_flux_x, rusanov_flux_y
-from .friction import apply_darcy_weisbach, apply_manning
+from .friction import apply_darcy_weisbach, apply_manning, apply_viscous_basal
 from .infiltration import InfiltrationModel, apply_infiltration
 from .kernels_numba import NUMBA_AVAILABLE, conservative_update_numba, max_wave_speed_numba
 from .reconstruction import (
@@ -18,6 +18,7 @@ from .reconstruction import (
 )
 
 EPS = 1e-10
+VALID_FRICTION_MODELS = frozenset({"none", "manning", "darcy-weisbach", "viscous"})
 
 
 def _safe_divide(num: Any, den: Any, xp: ModuleType = np, thresh: float = EPS):
@@ -38,6 +39,10 @@ class SolverConfig:
     friction_model: str = "none"
     manning_n: float = 0.03
     darcy_f: float = 0.02
+    fluid_density: float = 900.0
+    dynamic_viscosity: float = 0.005
+    yield_stress: float = 0.0
+    h_viscous_min: float = 1e-4
     evaporation_rate: float = 0.0
     degradation_rate: float = 0.0
     rain_rate: float = 0.0
@@ -46,6 +51,20 @@ class SolverConfig:
     point_source_flow_rate: Callable[[float], float] | None = None
     roi_buffer_m: float = 500.0
     compute_backend: str = "numpy"
+    execution_mode: str = "numpy"
+
+    def __post_init__(self) -> None:
+        if self.friction_model not in VALID_FRICTION_MODELS:
+            valid = ", ".join(sorted(VALID_FRICTION_MODELS))
+            raise ValueError(f"friction_model must be one of: {valid}")
+        if self.fluid_density <= 0.0:
+            raise ValueError("fluid_density must be > 0")
+        if self.dynamic_viscosity < 0.0:
+            raise ValueError("dynamic_viscosity must be >= 0")
+        if self.yield_stress < 0.0:
+            raise ValueError("yield_stress must be >= 0")
+        if self.h_viscous_min <= 0.0:
+            raise ValueError("h_viscous_min must be > 0")
 
 
 class OilSpillSolver:
@@ -55,6 +74,7 @@ class OilSpillSolver:
         set_backend(self.cfg.compute_backend)
 
         self.h = maximum(asarray(h0, dtype=float, xp_module=self.xp).copy(), 0.0, xp_module=self.xp)
+        self.max_h = self.h.copy()
         self.hu = zeros_like(self.h, xp_module=self.xp)
         self.hv = zeros_like(self.h, xp_module=self.xp)
         self.z = zeros_like(self.h, xp_module=self.xp) if z is None else asarray(z, dtype=float, xp_module=self.xp).copy()
@@ -104,10 +124,10 @@ class OilSpillSolver:
     def max_wave_speed(self) -> float:
         if self.execution_mode == "numba":
             return float(max_wave_speed_numba(self.h, self.hu, self.hv, self.cfg.g, EPS))
-        u = _safe_divide(self.hu, self.h)
-        v = _safe_divide(self.hv, self.h)
-        c = np.sqrt(self.cfg.g * np.maximum(self.h, 0.0))
-        return float(np.max(np.maximum(np.abs(u) + c, np.abs(v) + c)))
+        u = _safe_divide(self.hu, self.h, xp=self.xp)
+        v = _safe_divide(self.hv, self.h, xp=self.xp)
+        c = sqrt(self.cfg.g * maximum(self.h, 0.0, xp_module=self.xp), xp_module=self.xp)
+        return float(self.xp.max(self.xp.maximum(self.xp.abs(u) + c, self.xp.abs(v) + c)))
 
     def compute_dt(self) -> float:
         use_roi = self.roi_slices is not None
@@ -118,10 +138,10 @@ class OilSpillSolver:
             use_roi = h_roi.size > 0
 
         if use_roi:
-            u = _safe_divide(hu_roi, h_roi)
-            v = _safe_divide(hv_roi, h_roi)
-            c = np.sqrt(self.cfg.g * np.maximum(h_roi, 0.0))
-            speed = float(np.max(np.maximum(np.abs(u) + c, np.abs(v) + c)))
+            u = _safe_divide(hu_roi, h_roi, xp=self.xp)
+            v = _safe_divide(hv_roi, h_roi, xp=self.xp)
+            c = sqrt(self.cfg.g * maximum(h_roi, 0.0, xp_module=self.xp), xp_module=self.xp)
+            speed = float(self.xp.max(self.xp.maximum(self.xp.abs(u) + c, self.xp.abs(v) + c)))
         else:
             speed = self.max_wave_speed()
 
@@ -225,6 +245,19 @@ class OilSpillSolver:
             hu_roi, hv_roi = apply_darcy_weisbach(self.hu[roi], self.hv[roi], self.h[roi], dt, self.cfg.darcy_f, xp=self.xp)
             self.hu[roi] = hu_roi
             self.hv[roi] = hv_roi
+        elif self.cfg.friction_model == "viscous":
+            hu_roi, hv_roi = apply_viscous_basal(
+                self.hu[roi],
+                self.hv[roi],
+                self.h[roi],
+                dt,
+                self.cfg.fluid_density,
+                self.cfg.dynamic_viscosity,
+                self.cfg.h_viscous_min,
+                xp=self.xp,
+            )
+            self.hu[roi] = hu_roi
+            self.hv[roi] = hv_roi
 
         sink_rate = self.cfg.evaporation_rate + self.cfg.degradation_rate
         if sink_rate > 0.0:
@@ -244,11 +277,12 @@ class OilSpillSolver:
 
         self._apply_fluxes(dt)
         self._apply_sources(dt)
+        self.xp.maximum(self.max_h, self.h, out=self.max_h)
         self._update_roi()
         self.time += dt
         return dt
 
-    def run(self, snapshot_interval: float | None = None) -> tuple[list[dict], dict[str, float]]:
+    def run(self, snapshot_interval: float | None = None, verbose: bool = True) -> tuple[list[dict], dict[str, float | str]]:
         outputs: list[dict] = []
         next_snap = 0.0
         step_count = 0
@@ -268,13 +302,14 @@ class OilSpillSolver:
             if dt <= 0.0:
                 break
             step_count += 1
-            print(
-                f"[Solver] Paso {step_count} | t={self.time:.2f} | dt={dt:.4e} | "
-                f"max(h)={float(self.xp.max(self.h)):.4e} | "
-                f"ROI filas {self.roi_slices[0].start}-{self.roi_slices[0].stop}, "
-                f"cols {self.roi_slices[1].start}-{self.roi_slices[1].stop}",
-                flush=True,
-            )
+            if verbose:
+                print(
+                    f"[Solver] Paso {step_count} | t={self.time:.2f} | dt={dt:.4e} | "
+                    f"max(h)={float(self.xp.max(self.h)):.4e} | "
+                    f"ROI filas {self.roi_slices[0].start}-{self.roi_slices[0].stop}, "
+                    f"cols {self.roi_slices[1].start}-{self.roi_slices[1].stop}",
+                    flush=True,
+                )
             if snapshot_interval is not None and self.time + 1e-12 >= next_snap + snapshot_interval:
                 snap()
                 next_snap += snapshot_interval
@@ -295,6 +330,12 @@ class OilSpillSolver:
             "point_source_input_mass": self._cum_point_source_mass,
             "mass_closure_error_pct": 100.0 * closure / max(total_inputs, 1e-12),
             "max_cfl": max(self.cfl_history) if self.cfl_history else 0.0,
+            "max_thickness_m": float(self.xp.max(self.max_h)) if self.max_h.size else 0.0,
+            "friction_model": self.cfg.friction_model,
+            "fluid_density": self.cfg.fluid_density,
+            "dynamic_viscosity": self.cfg.dynamic_viscosity,
+            "yield_stress": self.cfg.yield_stress,
+            "h_viscous_min": self.cfg.h_viscous_min,
         }
         return outputs, summary
 
@@ -303,7 +344,14 @@ class OilSpillSolver:
         return float(self.xp.sum(self.h) * self.cfg.dx * self.cfg.dy)
 
 
-def run_simulation(config: SolverConfig, h0: Any, z: Any | None = None, infiltration: InfiltrationModel | None = None, snapshot_interval: float | None = None):
+def run_simulation(
+    config: SolverConfig,
+    h0: Any,
+    z: Any | None = None,
+    infiltration: InfiltrationModel | None = None,
+    snapshot_interval: float | None = None,
+    verbose: bool = True,
+):
     solver = OilSpillSolver(config, h0, z=z, infiltration=infiltration)
-    outputs, summary = solver.run(snapshot_interval=snapshot_interval)
+    outputs, summary = solver.run(snapshot_interval=snapshot_interval, verbose=verbose)
     return solver, outputs, summary
