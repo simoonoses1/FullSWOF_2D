@@ -1,0 +1,16 @@
+{
+  "initial_surface_mass": 0.0,
+  "final_surface_mass": 49.219210518273094,
+  "infiltrated_mass": 0.7807894817268856,
+  "evaporation_degradation_mass": 0.0,
+  "rain_input_mass": 0.0,
+  "point_source_input_mass": 50.0,
+  "mass_closure_error_pct": -4.263256414560601e-14,
+  "max_cfl": 0.3,
+  "dem_stats": {
+    "invalid_total": 698,
+    "invalid_remaining": 0,
+    "z_min": 430.04241943359375,
+    "z_max": 710.6788330078125
+  }
+}

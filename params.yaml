@@ -1,0 +1,22 @@
+solver:
+  nx: 100
+  ny: 50
+  dx: 1.0
+  dy: 1.0
+  g: 9.81
+  cfl: 0.45
+  t_end: 1000.0
+  friction_model: manning
+  manning_n: 0.08
+  darcy_f: 0.02
+  fluid_density: 900.0
+  dynamic_viscosity: 0.005
+  yield_stress: 0.0
+  h_viscous_min: 1.0e-4
+  evaporation_rate: 1.0e-7
+  degradation_rate: 1.0e-7
+
+infiltration:
+  saturated_hydraulic_conductivity: 2.0e-6
+  capillary_suction: 0.03
+  porosity_deficit: 0.25
